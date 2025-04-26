@@ -73,7 +73,7 @@ exports.verifyOtp = async (req, res) => {
 };
 // Login Module
 exports.login = async (req, res) => {
-    const { email, password } = req.body;
+    const { email, password, fingerprint, ipAddress, location, browserDetails, deviceDetails } = req.body;
     try {
         const user = await User.findOne({ email });
         if (!user) return res.status(404).json({ message: 'User not found' });
@@ -81,17 +81,43 @@ exports.login = async (req, res) => {
         const isPasswordCorrect = await bcrypt.compare(password, user.password);
         if (!isPasswordCorrect) return res.status(400).json({ message: 'Invalid credentials' });
 
-        // Extract client IP & location
-        const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-        const location = geoip.lookup(clientIp) || {};
+        // Check if device is already registered
+        let device = user.devices.find(d => d.fingerprint === fingerprint);
 
-        // Optional: Save device details (basic ZTNA-like behavior)
+        if (!device) {
+            // If device not found, create a pending device
+            user.devices.push({
+                fingerprint,
+                ipAddress,
+                location,
+                browserDetails,
+                deviceDetails,
+                approved: false,
+            });
+            await user.save();
+            return res.status(403).json({ message: 'New Device Registered. Waiting for Admin Approval.' });
+        }
 
+        if (!device.approved) {
+            return res.status(403).json({ message: 'Device not approved yet by Admin.' });
+        }
+
+        // Generate JWT
         const token = jwt.sign(
             { id: user._id, email: user.email, role: user.role },
-            process.env.JWT_SECRET || 'supersecretkey', 
+            process.env.JWT_SECRET || 'supersecretkey',
             { expiresIn: '1h' }
         );
+
+        // Save session
+        user.sessions.push({
+            token,
+            ipAddress,
+            location,
+            deviceFingerprint: fingerprint,
+            loginTime: new Date(),
+        });
+        await user.save();
 
         res.status(200).json({
             message: 'Login Successful',
@@ -100,10 +126,9 @@ exports.login = async (req, res) => {
                 fullName: user.fullName,
                 email: user.email,
                 role: user.role,
-                location: location.country || 'Unknown',
-                ip: clientIp,
             }
         });
+
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Something went wrong', error: error.message });
