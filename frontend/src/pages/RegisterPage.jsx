@@ -1,4 +1,6 @@
+// 1. First import useNavigate from react-router-dom
 import { useState } from "react";
+import { useNavigate } from "react-router-dom"; 
 import axios from "axios";
 
 function RegisterPage() {
@@ -12,6 +14,7 @@ function RegisterPage() {
     role: "user",
   });
   const [otp, setOtp] = useState("");
+  const navigate = useNavigate(); // 2. Create navigate function
 
   const handleChange = (e) => {
     setFormData(prev => ({
@@ -27,8 +30,8 @@ function RegisterPage() {
       alert("OTP Sent to your Email.");
       setStep(2);
     } catch (error) {
-      console.error(error.response.data.message);
-      alert(error.response.data.message);
+      console.error(error.response?.data?.message);
+      alert(error.response?.data?.message || "Error sending OTP.");
     }
   };
 
@@ -37,10 +40,10 @@ function RegisterPage() {
     try {
       await axios.post("http://localhost:5000/api/verify-otp", { ...formData, otp });
       alert("Registration Successful!");
-      // Redirect to login page later
+      navigate("/login"); // 3. Redirect to login
     } catch (error) {
-      console.error(error.response.data.message);
-      alert(error.response.data.message);
+      console.error(error.response?.data?.message);
+      alert(error.response?.data?.message || "Error verifying OTP.");
     }
   };
 

@@ -2,6 +2,8 @@ const User = require('../models/User');
 const Otp = require('../models/Otp');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
+const geoip = require('geoip-lite');
 const moment = require('moment'); // To handle OTP expiry times
 
 // Corrected transporter
@@ -64,6 +66,44 @@ exports.verifyOtp = async (req, res) => {
         await Otp.deleteMany({ email });
 
         res.status(201).json({ message: 'User Registered Successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Something went wrong', error: error.message });
+    }
+};
+// Login Module
+exports.login = async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const isPasswordCorrect = await bcrypt.compare(password, user.password);
+        if (!isPasswordCorrect) return res.status(400).json({ message: 'Invalid credentials' });
+
+        // Extract client IP & location
+        const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+        const location = geoip.lookup(clientIp) || {};
+
+        // Optional: Save device details (basic ZTNA-like behavior)
+
+        const token = jwt.sign(
+            { id: user._id, email: user.email, role: user.role },
+            process.env.JWT_SECRET || 'supersecretkey', 
+            { expiresIn: '1h' }
+        );
+
+        res.status(200).json({
+            message: 'Login Successful',
+            token,
+            user: {
+                fullName: user.fullName,
+                email: user.email,
+                role: user.role,
+                location: location.country || 'Unknown',
+                ip: clientIp,
+            }
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Something went wrong', error: error.message });
