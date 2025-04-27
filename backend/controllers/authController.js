@@ -5,6 +5,8 @@ const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
 const geoip = require('geoip-lite');
 const moment = require('moment'); // To handle OTP expiry times
+const axios = require('axios');
+const { sendDeviceApprovalNotification } = require('../services/notificationService');
 
 // Corrected transporter
 const transporter = nodemailer.createTransport({
@@ -17,7 +19,7 @@ const transporter = nodemailer.createTransport({
 
 // Registration - send OTP
 exports.register = async (req, res) => {
-    const { fullName, email, password, phoneNumber, department, role } = req.body;
+    const { fullName, email, password, phoneNumber, department, role, fingerprint, deviceDetails, browserDetails, location } = req.body;
     try {
         const existingUser = await User.findOne({ email });
         if (existingUser) return res.status(400).json({ message: 'User already exists' });
@@ -28,11 +30,23 @@ exports.register = async (req, res) => {
         await Otp.create({ email, otp: otpCode, expiry: otpExpiry });
 
         await transporter.sendMail({
-            from: `"ZTNA System" <${process.env.SMTP_EMAIL}>`, // corrected key
+            from: `"ZTNA System" <${process.env.SMTP_EMAIL}>`,
             to: email,
             subject: "Your OTP Code",
             text: `Your OTP is ${otpCode}. It will expire in 10 minutes.`,
         });
+
+        // Track the device fingerprint and mark it as pending approval
+        const newDevice = {
+            fingerprint,
+            deviceDetails,
+            browserDetails,
+            location,
+            approved: false, // Initially not approved
+        };
+
+        // Save the device data to be approved by the admin
+        await User.updateOne({ email }, { $push: { devices: newDevice } });
 
         res.status(200).json({ message: 'OTP Sent Successfully' });
     } catch (error) {
@@ -92,9 +106,13 @@ exports.login = async (req, res) => {
                 location,
                 browserDetails,
                 deviceDetails,
-                approved: false,
+                approved: false, // Flag this device as pending approval
             });
             await user.save();
+
+            // Notify the admin to approve the new device
+            sendDeviceApprovalNotification(user, fingerprint);
+
             return res.status(403).json({ message: 'New Device Registered. Waiting for Admin Approval.' });
         }
 
