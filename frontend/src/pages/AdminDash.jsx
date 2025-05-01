@@ -193,13 +193,6 @@ const AdminDash = () => {
   useEffect(() => {
     fetchUsers();
     fetchPendingDevices();
-    
-    const interval = setInterval(() => {
-      setData(generateMockData());
-      setLastUpdated(new Date());
-    }, 10000);
-    
-    return () => clearInterval(interval);
   }, []);
 
   const handleRefresh = () => {
@@ -380,33 +373,22 @@ const AdminDash = () => {
       {/* User Management */}
       <div className="bg-white rounded-lg shadow p-4 mt-6">
         <div className="flex items-center mb-4">
-          <Users size={20} className="text-purple-500 mr-2" />
+          <Users size={20} className="text-blue-500 mr-2" />
           <h2 className="text-lg font-bold">User Management</h2>
         </div>
-        <div className="space-y-2">
-          {users.map((user) => (
-            <div key={user._id} className="flex items-center justify-between border-b border-gray-100 py-2">
+        <div className="space-y-4">
+          {users.map(user => (
+            <div key={user._id} className="flex justify-between items-center py-2 border-b border-gray-100">
               <div>
-                <p className="font-medium">{user.fullName}</p>
-                <p className="text-sm text-gray-500">{user.email}</p>
-                <p className="text-sm text-gray-500">Role: {user.role}</p>
+                <p className="text-sm font-medium">{user.username}</p>
+                <p className="text-xs text-gray-500">{user.email}</p>
               </div>
-              <div className="flex items-center space-x-4">
-                <span className={`px-2 py-1 rounded text-xs font-medium ${
-                  user.disabled ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
-                }`}>
-                  {user.disabled ? 'Disabled' : 'Active'}
-                </span>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={!user.disabled}
-                    onChange={() => handleUserToggle(user._id, !user.disabled)}
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                </label>
-              </div>
+              <button
+                onClick={() => handleUserToggle(user._id, !user.disabled)}
+                className={`px-4 py-2 text-white rounded ${user.disabled ? 'bg-green-500' : 'bg-red-500'}`}
+              >
+                {user.disabled ? 'Enable' : 'Disable'}
+              </button>
             </div>
           ))}
         </div>
