@@ -10,19 +10,8 @@ const deviceSchema = new mongoose.Schema({
     browserDetails: String,
     deviceDetails: String,
     approved: { type: Boolean, default: false },
+    lastUsed: { type: Date },
     createdAt: { type: Date, default: Date.now },
-});
-
-const sessionSchema = new mongoose.Schema({
-    token: String,
-    ipAddress: String,
-    location: {
-        lat: Number,
-        lon: Number,
-    },
-    deviceFingerprint: String,
-    loginTime: { type: Date, default: Date.now },
-    logoutTime: Date,
 });
 
 const userSchema = new mongoose.Schema({
@@ -33,7 +22,8 @@ const userSchema = new mongoose.Schema({
     department: String,
     role: { type: String, default: "user" },
     devices: [deviceSchema],
-    sessions: [sessionSchema],
+    downloads: { type: Number, default: 0 },
+    navigations: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now },
 });
 

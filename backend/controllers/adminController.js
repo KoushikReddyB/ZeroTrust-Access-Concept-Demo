@@ -1,60 +1,160 @@
 const User = require('../models/User');
-const Session = require('../models/Session'); // Assuming you have a session model
-const ActivityLog = require('../models/ActivityLog'); // Assuming you have an activity log model
-const SecurityAlert = require('../models/SecurityAlert'); // Security alerts collection
+const Session = require('../models/Session');
+const ActivityLog = require('../models/ActivityLog');
+const SecurityAlert = require('../models/SecurityAlert');
+const bcrypt = require('bcryptjs');
 
-// Get Admin Dashboard Data
-exports.getAdminDashboardData = async (req, res) => {
+// Get all users
+exports.getAllUsers = async (req, res) => {
   try {
-    // Active Users
-    const activeUsers = await User.find({ isActive: true }).countDocuments();
-    
-    // Active Sessions
-    const activeSessions = await Session.find({ isActive: true }).countDocuments();
+    const users = await User.find()
+      .select('fullName email role department disabled devices')
+      .sort({ createdAt: -1 });
 
-    // Access Attempts
-    const accessAttempts = await ActivityLog.find({ action: 'attempt' }).countDocuments();
+    res.status(200).json({ users });
+  } catch (error) {
+    console.error('Get Users Error:', error);
+    res.status(500).json({ message: 'Error fetching users' });
+  }
+};
 
-    // Blocked Access
-    const blockedAccess = await SecurityAlert.find({ level: 'high' }).countDocuments(); // High-level alerts
+// Toggle user status (enable/disable)
+exports.toggleUserStatus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { disabled } = req.body;
 
-    // Available Applications (example)
-    const availableApplications = 42;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-    // Avg Network Latency (Dummy data or calculate from your logs)
-    const avgNetworkLatency = 40;
+    user.disabled = disabled;
+    await user.save();
 
-    // Device Compliance
-    const compliantDevices = await User.find({ deviceCompliant: true }).countDocuments();
-    const totalDevices = await User.countDocuments();
-    const deviceComplianceRate = (compliantDevices / totalDevices) * 100;
+    if (disabled) {
+      // Revoke all active sessions
+      await Session.updateMany(
+        { userId, isActive: true },
+        { 
+          isActive: false,
+          revokedAt: new Date(),
+          revokedBy: req.user.id,
+          revokedReason: 'Account disabled by admin'
+        }
+      );
+    }
 
-    // Security Alerts (sample recent alerts)
-    const recentAlerts = await SecurityAlert.find().sort({ createdAt: -1 }).limit(5); 
+    await ActivityLog.create({
+      user: req.user.id,
+      action: disabled ? 'user_disabled' : 'user_enabled',
+      details: `${disabled ? 'Disabled' : 'Enabled'} user: ${user.email}`,
+      ipAddress: req.ip
+    });
 
-    // User Locations
-    const userLocations = await User.aggregate([
-      { $group: { _id: "$location.country", count: { $sum: 1 } } }
-    ]);
-
-    // Recent Activity (example)
-    const recentActivity = await ActivityLog.find().sort({ timestamp: -1 }).limit(5);
-
-    // Returning the collected data
     res.status(200).json({
-      activeUsers,
-      activeSessions,
-      accessAttempts,
-      blockedAccess,
-      availableApplications,
-      avgNetworkLatency,
-      deviceComplianceRate,
-      recentAlerts,
-      userLocations,
-      recentActivity
+      message: `User ${disabled ? 'disabled' : 'enabled'} successfully`,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        disabled: user.disabled
+      }
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error fetching dashboard data" });
+    console.error('User Status Toggle Error:', error);
+    res.status(500).json({ message: 'Error updating user status' });
+  }
+};
+
+// Get pending devices
+exports.getPendingDevices = async (req, res) => {
+  try {
+    const users = await User.find({ 'devices.approved': false });
+    const pendingDevices = users.reduce((devices, user) => {
+      const userPendingDevices = user.devices
+        .filter(device => !device.approved)
+        .map(device => ({
+          ...device.toObject(),
+          userId: user._id,
+          userEmail: user.email
+        }));
+      return [...devices, ...userPendingDevices];
+    }, []);
+
+    res.json({ devices: pendingDevices });
+  } catch (error) {
+    console.error('Error fetching pending devices:', error);
+    res.status(500).json({ message: 'Error fetching pending devices' });
+  }
+};
+
+// Approve device
+exports.approveDevice = async (req, res) => {
+  const { userId, deviceId } = req.params;
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const device = user.devices.id(deviceId);
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    device.approved = true;
+    await user.save();
+
+    await ActivityLog.create({
+      user: req.user.id,
+      action: 'device_approval',
+      resource: `Device ${deviceId}`,
+      details: `Device approved for user: ${user.email}`
+    });
+
+    return res.status(200).json({ 
+      message: 'Device approved successfully',
+      device: device
+    });
+  } catch (error) {
+    console.error('Device Approval Error:', error);
+    return res.status(500).json({ message: 'Error approving device' });
+  }
+};
+
+// Deny device
+exports.denyDevice = async (req, res) => {
+  const { userId, deviceId } = req.params;
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const device = user.devices.id(deviceId);
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    device.approved = false;
+    await user.save();
+
+    await ActivityLog.create({
+      user: req.user.id,
+      action: 'device_denial',
+      resource: `Device ${deviceId}`,
+      details: `Device denied for user: ${user.email}`
+    });
+
+    return res.status(200).json({ 
+      message: 'Device denied successfully',
+      device: device
+    });
+  } catch (error) {
+    console.error('Device Denial Error:', error);
+    return res.status(500).json({ message: 'Error denying device' });
   }
 };

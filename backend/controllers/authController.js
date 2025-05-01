@@ -1,10 +1,11 @@
 const User = require('../models/User');
+const Session = require('../models/Session');
 const Otp = require('../models/Otp');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
 const geoip = require('geoip-lite');
-const moment = require('moment'); // To handle OTP expiry times
+const moment = require('moment');
 const axios = require('axios');
 const { sendDeviceApprovalNotification } = require('../services/notificationService');
 
@@ -12,12 +13,11 @@ const { sendDeviceApprovalNotification } = require('../services/notificationServ
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: process.env.SMTP_EMAIL || "2200090018csit@gmail.com", // corrected key
-        pass: process.env.SMTP_PASSWORD || "vkxpkhnosgcccbrh" // corrected key
+        user: process.env.SMTP_EMAIL || "2200090018csit@gmail.com",
+        pass: process.env.SMTP_PASSWORD || "vkxpkhnosgcccbrh"
     }
 });
 
-// Registration - send OTP
 exports.register = async (req, res) => {
     const { fullName, email, password, phoneNumber, department, role, fingerprint, deviceDetails, browserDetails, location } = req.body;
     try {
@@ -25,7 +25,7 @@ exports.register = async (req, res) => {
         if (existingUser) return res.status(400).json({ message: 'User already exists' });
 
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpExpiry = moment().add(10, 'minutes').toISOString(); // OTP expires in 10 minutes
+        const otpExpiry = moment().add(10, 'minutes').toISOString();
 
         await Otp.create({ email, otp: otpCode, expiry: otpExpiry });
 
@@ -36,17 +36,24 @@ exports.register = async (req, res) => {
             text: `Your OTP is ${otpCode}. It will expire in 10 minutes.`,
         });
 
-        // Track the device fingerprint and mark it as pending approval
         const newDevice = {
             fingerprint,
             deviceDetails,
             browserDetails,
             location,
-            approved: false, // Initially not approved
+            approved: false,
         };
 
-        // Save the device data to be approved by the admin
-        await User.updateOne({ email }, { $push: { devices: newDevice } });
+        const user = new User({
+            fullName,
+            email,
+            password: await bcrypt.hash(password, 10),
+            phoneNumber,
+            department,
+            role,
+            devices: [newDevice]
+        });
+        await user.save();
 
         res.status(200).json({ message: 'OTP Sent Successfully' });
     } catch (error) {
@@ -55,47 +62,6 @@ exports.register = async (req, res) => {
     }
 };
 
-// OTP Verification and User Save
-exports.verifyOtp = async (req, res) => {
-    const { fullName, email, password, phoneNumber, department, role, otp } = req.body;
-    try {
-        const validOtp = await Otp.findOne({ email, otp });
-
-        if (!validOtp) {
-            return res.status(400).json({ message: 'Invalid or expired OTP' });
-        }
-
-        // Check if OTP is expired
-        const otpExpiry = moment(validOtp.expiry);
-        if (moment().isAfter(otpExpiry)) {
-            return res.status(400).json({ message: 'OTP has expired' });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        // Create the user only after OTP is verified
-        await User.create({ fullName, email, password: hashedPassword, phoneNumber, department, role });
-
-        // Clean up OTPs after successful registration
-        await Otp.deleteMany({ email });
-
-        res.status(201).json({ message: 'User Registered Successfully' });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Something went wrong', error: error.message });
-    }
-};
-// Normal User Login
-exports.userLogin = async (req, res) => {
-  await loginHandler(req, res, 'user');
-};
-
-// Admin Login
-exports.adminLogin = async (req, res) => {
-  await loginHandler(req, res, 'admin');
-};
-
-// Common Login Handler
 const loginHandler = async (req, res, expectedRole) => {
   const { email, password, fingerprint, ipAddress, location, browserDetails, deviceDetails } = req.body;
   try {
@@ -112,14 +78,15 @@ const loginHandler = async (req, res, expectedRole) => {
     let device = user.devices.find(d => d.fingerprint === fingerprint);
 
     if (!device) {
-      user.devices.push({
+      device = {
         fingerprint,
         ipAddress,
         location,
         browserDetails,
         deviceDetails,
         approved: false,
-      });
+      };
+      user.devices.push(device);
       await user.save();
       sendDeviceApprovalNotification(user, fingerprint);
       return res.status(403).json({ message: 'New Device Registered. Waiting for Admin Approval.' });
@@ -135,13 +102,18 @@ const loginHandler = async (req, res, expectedRole) => {
       { expiresIn: '1h' }
     );
 
-    user.sessions.push({
-      token,
+    // Create new session
+    await Session.create({
+      userId: user._id,
       ipAddress,
+      deviceDetails,
+      browserDetails,
       location,
-      deviceFingerprint: fingerprint,
-      loginTime: new Date(),
+      isActive: true
     });
+
+    // Update device last used timestamp
+    device.lastUsed = new Date();
     await user.save();
 
     res.status(200).json({
@@ -158,4 +130,36 @@ const loginHandler = async (req, res, expectedRole) => {
     console.error(error);
     res.status(500).json({ message: 'Something went wrong', error: error.message });
   }
+};
+
+exports.userLogin = async (req, res) => {
+  await loginHandler(req, res, 'user');
+};
+
+exports.adminLogin = async (req, res) => {
+  await loginHandler(req, res, 'admin');
+};
+
+exports.verifyOtp = async (req, res) => {
+    const { email, otp } = req.body;
+    try {
+        const validOtp = await Otp.findOne({ email, otp });
+
+        if (!validOtp) {
+            return res.status(400).json({ message: 'Invalid or expired OTP' });
+        }
+
+        const otpExpiry = moment(validOtp.expiry);
+        if (moment().isAfter(otpExpiry)) {
+            return res.status(400).json({ message: 'OTP has expired' });
+        }
+
+        // Clean up OTPs after successful verification
+        await Otp.deleteMany({ email });
+
+        res.status(200).json({ message: 'OTP Verified Successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Something went wrong', error: error.message });
+    }
 };

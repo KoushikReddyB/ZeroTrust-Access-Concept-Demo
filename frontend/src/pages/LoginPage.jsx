@@ -4,8 +4,10 @@ import axios from "axios";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
 function LoginPage() {
-  const location = useLocation(); 
+  const location = useLocation();
   const [formData, setFormData] = useState({ email: "", password: "" });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -14,10 +16,14 @@ function LoginPage() {
       ...prevData,
       [name]: value
     }));
+    setError(""); // Clear error when user types
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setIsLoading(true);
+    setError("");
+
     try {
       const fp = await FingerprintJS.load();
       const result = await fp.get();
@@ -29,37 +35,20 @@ function LoginPage() {
 
       let locationData = { lat: 0, lon: 0 };
 
-      // Ask user nicely
-      const userConsent = window.confirm(
-        "We need your location to permit the device securely.\nIf you deny, we'll use your IP-based location."
-      );
-
-      if (userConsent) {
-        try {
-          locationData = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                resolve({
-                  lat: pos.coords.latitude,
-                  lon: pos.coords.longitude
-                });
-              },
-              (err) => {
-                console.error("GPS location error", err);
-                reject(err);
-              },
-              { enableHighAccuracy: true, timeout: 10000 }
-            );
+      try {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 10000
           });
-        } catch (geoError) {
-          console.error("Falling back to IP location due to GPS error");
-          const ipLocationRes = await axios.get('https://ipapi.co/json/');
-          locationData = {
-            lat: ipLocationRes.data.latitude,
-            lon: ipLocationRes.data.longitude
-          };
-        }
-      } else {
+        });
+
+        locationData = {
+          lat: position.coords.latitude,
+          lon: position.coords.longitude
+        };
+      } catch (geoError) {
+        console.log("Using IP-based location due to:", geoError.message);
         const ipLocationRes = await axios.get('https://ipapi.co/json/');
         locationData = {
           lat: ipLocationRes.data.latitude,
@@ -84,8 +73,6 @@ function LoginPage() {
 
       localStorage.setItem("token", res.data.token);
 
-      alert("Login Successful!");
-
       if (res.data.user.role === "admin") {
         navigate("/admin-dashboard");
       } else {
@@ -93,33 +80,65 @@ function LoginPage() {
       }
 
     } catch (error) {
-      console.error(error.response?.data?.message || error.message);
-      alert(error.response?.data?.message || "Login Failed");
+      setError(error.response?.data?.message || "Login failed. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div style={{ padding: "20px" }}>
-      <form onSubmit={handleLogin}>
-        <h2>Login</h2>
-        <input
-          type="email"
-          name="email"
-          placeholder="Email"
-          onChange={handleChange}
-          value={formData.email}
-          required
-        /><br /><br />
-        <input
-          type="password"
-          name="password"
-          placeholder="Password"
-          onChange={handleChange}
-          value={formData.password}
-          required
-        /><br /><br />
-        <button type="submit">Login</button>
-      </form>
+    <div className="auth-container">
+      <div className="auth-card">
+        <h2 className="text-2xl font-bold text-center mb-6">
+          {location.pathname.includes("/admin/login") ? "Admin Login" : "Login"}
+        </h2>
+        
+        {error && (
+          <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-4">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleLogin}>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email
+            </label>
+            <input
+              type="email"
+              name="email"
+              className="input-field"
+              placeholder="Enter your email"
+              onChange={handleChange}
+              value={formData.email}
+              required
+            />
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Password
+            </label>
+            <input
+              type="password"
+              name="password"
+              className="input-field"
+              placeholder="Enter your password"
+              onChange={handleChange}
+              value={formData.password}
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            className={`btn btn-primary ${isLoading ? 'opacity-75 cursor-not-allowed' : ''}`}
+            disabled={isLoading}
+          >
+            {isLoading ? 'Logging in...' : 'Login'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
